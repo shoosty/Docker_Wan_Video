@@ -1,0 +1,27 @@
+# RunPod serverless runtime + utility libs
+runpod==1.7.7
+supabase==2.10.0
+requests==2.32.3
+
+# Hugging Face stack for model download + cache
+huggingface-hub[hf_transfer]==0.27.0
+transformers==4.46.3
+accelerate==1.2.1
+safetensors==0.4.5
+
+# Wan2.1 reference repo deps (matches their requirements.txt)
+diffusers==0.32.1
+einops==0.8.0
+opencv-python==4.10.0.84
+imageio==2.36.1
+imageio-ffmpeg==0.5.1
+av==13.1.0
+
+# T5 text encoder (Wan ships with umt5-xxl)
+sentencepiece==0.2.0
+
+# Image decode for i2v
+pillow==11.0.0
+
+# Memory + perf
+xformers==0.0.28.post3
