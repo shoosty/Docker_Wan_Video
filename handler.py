@@ -171,35 +171,46 @@ _MODELS: dict = {}
 
 
 def get_pipeline(mode: str, job_id: str):
-    """Lazy-load + cache the Wan pipeline for the given mode."""
+    """Lazy-load + cache the Wan pipeline for the given mode.
+
+    API verified 2026-06-20 against
+    huggingface.co/docs/diffusers/main/en/api/pipelines/wan:
+      - T2V: WanPipeline.from_pretrained("Wan-AI/Wan2.1-T2V-14B-Diffusers")
+      - I2V: WanImageToVideoPipeline with an explicit
+             AutoencoderKLWan VAE in float32 (the VAE is the
+             precision-sensitive piece; transformer + text encoder
+             stay in bfloat16).
+    """
     if mode in _MODELS:
         return _MODELS[mode]
 
     stamp(job_id, "load_model", "started", f"mode={mode}")
     t0 = time.time()
 
-    # Imports happen here so a t2v-only worker never imports i2v code
-    # paths and vice versa.
     if mode == "t2v":
-        # Wan-AI/Wan2.1-T2V-14B — pipeline class lives in the cloned
-        # reference repo at /app/wan_repo.
-        from wan import WanT2V  # type: ignore
-        pipe = WanT2V.from_pretrained(
-            "Wan-AI/Wan2.1-T2V-14B",
+        from diffusers import WanPipeline
+        pipe = WanPipeline.from_pretrained(
+            "Wan-AI/Wan2.1-T2V-14B-Diffusers",
             torch_dtype=torch.bfloat16,
-            device="cuda",
-        )
+        ).to("cuda")
     elif mode == "i2v":
-        from wan import WanI2V  # type: ignore
-        pipe = WanI2V.from_pretrained(
-            "Wan-AI/Wan2.1-I2V-14B-720P",
-            torch_dtype=torch.bfloat16,
-            device="cuda",
+        from diffusers import AutoencoderKLWan, WanImageToVideoPipeline
+        model_id = "Wan-AI/Wan2.1-I2V-14B-720P-Diffusers"
+        vae = AutoencoderKLWan.from_pretrained(
+            model_id, subfolder="vae", torch_dtype=torch.float32
         )
+        pipe = WanImageToVideoPipeline.from_pretrained(
+            model_id,
+            vae=vae,
+            torch_dtype=torch.bfloat16,
+        ).to("cuda")
     else:
         raise ValueError(f"unknown mode: {mode!r} (expected 't2v' or 'i2v')")
 
-    pipe.set_progress_bar_config(disable=True)
+    try:
+        pipe.set_progress_bar_config(disable=True)
+    except Exception:
+        pass
     _MODELS[mode] = pipe
     elapsed = time.time() - t0
     stamp(job_id, "load_model", "completed", f"mode={mode} took={elapsed:.1f}s")
@@ -237,20 +248,12 @@ def load_input_image(inp: dict, job_id: str):
 # ─────────────────────────────────────────────
 
 def frames_to_mp4(frames, out_path: Path, fps: int) -> None:
-    """Write a list of HxWx3 uint8 frames to an h264 MP4 via imageio
-    (which uses imageio-ffmpeg under the hood). Yuv420p so it plays
-    everywhere; CRF 18 so it looks good without ballooning."""
-    import imageio.v3 as iio
+    """Write a list of PIL Images to an h264 MP4. Uses diffusers'
+    export_to_video helper which wraps imageio-ffmpeg. Output is
+    yuv420p so it plays in every browser."""
+    from diffusers.utils import export_to_video
 
-    iio.imwrite(
-        out_path,
-        frames,
-        fps=fps,
-        codec="libx264",
-        pixelformat="yuv420p",
-        macro_block_size=1,
-        quality=8,  # imageio's 1-10; 8 ≈ CRF ~18
-    )
+    export_to_video(frames, str(out_path), fps=fps)
 
 
 # ─────────────────────────────────────────────
@@ -353,14 +356,10 @@ def handler(event: dict) -> dict:
         if mode == "i2v":
             kwargs["image"] = image
         out = pipe(**kwargs)
-        # Wan reference returns either a numpy array (T,H,W,3) uint8
-        # or an object with .frames[0]; normalize.
-        if hasattr(out, "frames"):
-            frames = out.frames[0]
-        elif hasattr(out, "videos"):
-            frames = out.videos[0]
-        else:
-            frames = out
+        # diffusers' WanPipeline + WanImageToVideoPipeline return an
+        # object with .frames as a list-of-batches; first (only)
+        # batch is our PIL Image sequence.
+        frames = out.frames[0]
         diff_sec = time.time() - t_diff
         stamp(
             job_id,

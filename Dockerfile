@@ -21,7 +21,6 @@ ENV DEBIAN_FRONTEND=noninteractive \
 
 RUN apt-get update && apt-get install -y --no-install-recommends \
         ffmpeg \
-        git \
         curl \
         ca-certificates \
     && rm -rf /var/lib/apt/lists/*
@@ -31,12 +30,10 @@ WORKDIR /app
 COPY requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
 
-# Stephen 2026-06-20: Wan reference repo at github.com/Wan-Video/Wan2.1
-# Cloned into /app/wan_repo at build so we can import the pipeline
-# without a runtime git clone.
-RUN git clone --depth 1 https://github.com/Wan-Video/Wan2.1.git /app/wan_repo
-ENV PYTHONPATH=/app/wan_repo:${PYTHONPATH}
-
+# Stephen 2026-06-20: API verification (huggingface.co/docs/diffusers/
+# main/en/api/pipelines/wan) confirms Wan2.1 ships in diffusers itself
+# via `from diffusers import WanPipeline, WanImageToVideoPipeline`.
+# No git clone of the reference repo needed.
 COPY handler.py .
 
 CMD ["python", "-u", "handler.py"]
