@@ -199,7 +199,13 @@ def get_pipeline(mode: str, job_id: str):
             "Wan-AI/Wan2.1-T2V-14B-Diffusers",
             torch_dtype=torch.bfloat16,
         )
-        pipe.enable_model_cpu_offload()
+        # v6 (Stephen 2026-06-20): model_cpu_offload kept text_encoder
+        # on GPU during transformer forward → OOM at 23.05/23.54 GiB.
+        # sequential_cpu_offload aggressively swaps EVERY component
+        # off GPU when its forward is done; only one resident at a
+        # time. ~30% slower per job but the only path that fits 14B
+        # on a 24 GB card with margin.
+        pipe.enable_sequential_cpu_offload()
     elif mode == "i2v":
         from diffusers import AutoencoderKLWan, WanImageToVideoPipeline
         model_id = "Wan-AI/Wan2.1-I2V-14B-720P-Diffusers"
@@ -211,7 +217,13 @@ def get_pipeline(mode: str, job_id: str):
             vae=vae,
             torch_dtype=torch.bfloat16,
         )
-        pipe.enable_model_cpu_offload()
+        # v6 (Stephen 2026-06-20): model_cpu_offload kept text_encoder
+        # on GPU during transformer forward → OOM at 23.05/23.54 GiB.
+        # sequential_cpu_offload aggressively swaps EVERY component
+        # off GPU when its forward is done; only one resident at a
+        # time. ~30% slower per job but the only path that fits 14B
+        # on a 24 GB card with margin.
+        pipe.enable_sequential_cpu_offload()
     else:
         raise ValueError(f"unknown mode: {mode!r} (expected 't2v' or 'i2v')")
 
