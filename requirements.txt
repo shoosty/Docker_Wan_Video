@@ -30,6 +30,10 @@ protobuf==5.28.3
 numpy<2
 
 # Misc
+# ftfy: diffusers' WanPipeline prompt_clean() calls ftfy.fix_text()
+# unconditionally even though it's nominally optional. v4 died here:
+#   NameError: name 'ftfy' is not defined
+ftfy==6.3.1
 einops==0.8.0
 opencv-python==4.10.0.84
 imageio==2.36.1
