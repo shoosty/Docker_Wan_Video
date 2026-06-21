@@ -11,7 +11,7 @@ requests==2.32.3
 # Hugging Face stack
 # huggingface-hub bumped 0.27→0.30 because transformers 4.51.3
 # requires huggingface-hub >=0.30.0 (pip resolver caught it on v3).
-huggingface-hub[hf_transfer]==0.30.0
+huggingface-hub[hf_transfer]==0.34.0
 transformers==4.51.3
 accelerate==1.4.0
 safetensors==0.5.3
