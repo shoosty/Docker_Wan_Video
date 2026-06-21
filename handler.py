@@ -99,6 +99,30 @@ if SUPABASE_URL and SUPABASE_KEY:
     log(f"SUPABASE_URL    = {SUPABASE_URL}")
     log(f"SUPABASE_BUCKET = {SUPABASE_BUCKET}")
     supa = create_client(SUPABASE_URL, SUPABASE_KEY)
+    # v7 (Stephen 2026-06-21): "do we even know if the bucket
+    # collection is working?" Smoke-test once at boot — write a
+    # 1 KB probe file, list it, delete it. Tells us if RLS, key
+    # format, and bucket existence are all live BEFORE the first
+    # real job. Failures here don't kill the worker; they just log.
+    try:
+        log("[smoke] supabase storage probe — start")
+        probe_path = f"wan-smoke/{WORKER_ID}-{int(time.time())}.txt"
+        probe_body = f"hello from worker {WORKER_ID}".encode()
+        supa.storage.from_(SUPABASE_BUCKET).upload(
+            path=probe_path,
+            file=probe_body,
+            file_options={"content-type": "text/plain", "upsert": "true"},
+        )
+        url = supa.storage.from_(SUPABASE_BUCKET).get_public_url(probe_path)
+        log(f"[smoke] uploaded ok → {url}")
+        try:
+            supa.storage.from_(SUPABASE_BUCKET).remove([probe_path])
+            log("[smoke] delete ok")
+        except Exception as e:
+            log(f"[smoke] delete failed (non-fatal): {e}", "WARN")
+    except Exception as e:
+        log(f"[smoke] STORAGE PROBE FAILED — uploads will fail too: "
+            f"{type(e).__name__}: {e}", "ERROR")
 else:
     log("SUPABASE_URL / KEY unset — running in lab mode (no upload). "
         "Handler will return mp4_b64 instead of mp4_url.", "WARN")
@@ -199,13 +223,12 @@ def get_pipeline(mode: str, job_id: str):
             "Wan-AI/Wan2.1-T2V-14B-Diffusers",
             torch_dtype=torch.bfloat16,
         )
-        # v6 (Stephen 2026-06-20): model_cpu_offload kept text_encoder
-        # on GPU during transformer forward → OOM at 23.05/23.54 GiB.
-        # sequential_cpu_offload aggressively swaps EVERY component
-        # off GPU when its forward is done; only one resident at a
-        # time. ~30% slower per job but the only path that fits 14B
-        # on a 24 GB card with margin.
-        pipe.enable_sequential_cpu_offload()
+        # v7 (Stephen 2026-06-21): on a 48GB+ pod (A6000/A100/H100),
+        # 14B fits natively. Native .to("cuda") is way faster than
+        # any offload pattern (no swap overhead per step). The
+        # endpoint's GPU allow-list excludes 24 GB cards so this
+        # path is the only one that runs.
+        pipe = pipe.to("cuda")
     elif mode == "i2v":
         from diffusers import AutoencoderKLWan, WanImageToVideoPipeline
         model_id = "Wan-AI/Wan2.1-I2V-14B-720P-Diffusers"
@@ -217,18 +240,16 @@ def get_pipeline(mode: str, job_id: str):
             vae=vae,
             torch_dtype=torch.bfloat16,
         )
-        # v6 (Stephen 2026-06-20): model_cpu_offload kept text_encoder
-        # on GPU during transformer forward → OOM at 23.05/23.54 GiB.
-        # sequential_cpu_offload aggressively swaps EVERY component
-        # off GPU when its forward is done; only one resident at a
-        # time. ~30% slower per job but the only path that fits 14B
-        # on a 24 GB card with margin.
-        pipe.enable_sequential_cpu_offload()
+        # v7 (Stephen 2026-06-21): see T2V comment above.
+        pipe = pipe.to("cuda")
     else:
         raise ValueError(f"unknown mode: {mode!r} (expected 't2v' or 'i2v')")
 
+    # v7 (Stephen 2026-06-21): debug-on — keep diffusers' per-step
+    # progress bar enabled so the log shows real-time progress and
+    # we can spot a stall vs. just slow. Was disabled in v1-v6.
     try:
-        pipe.set_progress_bar_config(disable=True)
+        pipe.set_progress_bar_config(disable=False, leave=True)
     except Exception:
         pass
     _MODELS[mode] = pipe
@@ -326,13 +347,18 @@ def handler(event: dict) -> dict:
         if not prompt:
             raise ValueError("prompt is required")
 
-        # Defaults match Wan reference for 720p / 5s clips on 24GB.
-        duration_sec = float(inp.get("duration_sec", 5.0))
-        width = int(inp.get("width", 1280))
-        height = int(inp.get("height", 720))
+        # v7 (Stephen 2026-06-21): defaults trimmed to fast lab
+        # values. Wan2.1 was trained primarily on 832×480 16:9 —
+        # native aspect, fastest defaults that look honest. Bump
+        # the request explicitly to 1280×720 when you want full HD.
+        # 3s clip / 16fps / 30 steps is the "prove it works" recipe;
+        # bump steps to 50 for production renders.
+        duration_sec = float(inp.get("duration_sec", 3.0))
+        width = int(inp.get("width", 832))
+        height = int(inp.get("height", 480))
         fps = int(inp.get("fps", 16))
         guidance = float(inp.get("guidance_scale", 6.0))
-        steps = int(inp.get("num_inference_steps", 50))
+        steps = int(inp.get("num_inference_steps", 30))
         seed = inp.get("seed")
         if seed is None:
             seed = secrets.randbits(31)
