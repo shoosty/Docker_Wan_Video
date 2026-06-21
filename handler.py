@@ -187,12 +187,19 @@ def get_pipeline(mode: str, job_id: str):
     stamp(job_id, "load_model", "started", f"mode={mode}")
     t0 = time.time()
 
+    # v4 (Stephen 2026-06-20): Wan2.1-14B at bfloat16 is ~22.5 GB,
+    # which OOMs an RTX 4090 (24 GB) at the eager .to("cuda") step
+    # — last 50 MiB of overhead crashes the load. Switching to
+    # enable_model_cpu_offload(): components live in CPU RAM and
+    # are swapped to GPU per forward pass. ~10-20% slower per job
+    # but fits comfortably in 24 GB VRAM.
     if mode == "t2v":
         from diffusers import WanPipeline
         pipe = WanPipeline.from_pretrained(
             "Wan-AI/Wan2.1-T2V-14B-Diffusers",
             torch_dtype=torch.bfloat16,
-        ).to("cuda")
+        )
+        pipe.enable_model_cpu_offload()
     elif mode == "i2v":
         from diffusers import AutoencoderKLWan, WanImageToVideoPipeline
         model_id = "Wan-AI/Wan2.1-I2V-14B-720P-Diffusers"
@@ -203,7 +210,8 @@ def get_pipeline(mode: str, job_id: str):
             model_id,
             vae=vae,
             torch_dtype=torch.bfloat16,
-        ).to("cuda")
+        )
+        pipe.enable_model_cpu_offload()
     else:
         raise ValueError(f"unknown mode: {mode!r} (expected 't2v' or 'i2v')")
 
