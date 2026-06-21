@@ -1,31 +1,39 @@
+# v3: pinned exact versions known to work together with torch 2.5.1.
+# v2 used `>=` ranges that pulled diffusers 0.38 + transformers 5.x,
+# which then tried to use torchvision APIs the bundled 0.20.x doesn't
+# have ("torchvision::nms does not exist"). Hard pins below.
+
 # RunPod serverless runtime + utility libs
 runpod==1.7.7
 supabase==2.10.0
 requests==2.32.3
 
-# Hugging Face stack for model download + cache.
-# transformers + accelerate bumped to versions that match
-# diffusers >=0.33 (Wan2.1) — older pins broke the import.
-huggingface-hub[hf_transfer]>=0.27.0
-transformers>=4.51.0
-accelerate>=1.4.0
-safetensors>=0.4.5
+# Hugging Face stack
+huggingface-hub[hf_transfer]==0.27.0
+transformers==4.51.3
+accelerate==1.4.0
+safetensors==0.5.3
 
 # Wan2.1 pipelines (WanPipeline, WanImageToVideoPipeline,
-# AutoencoderKLWan) landed in diffusers 0.33. Pin a known-good
-# Wan-supporting release; allow patch updates.
-diffusers>=0.35.0,<0.40.0
-einops>=0.8.0
-opencv-python>=4.10.0.84
-imageio>=2.36.1
-imageio-ffmpeg>=0.5.1
-av>=13.1.0
+# AutoencoderKLWan). 0.35.0 is the first stable release with the
+# full Wan2.1 stack and remains compatible with transformers 4.51.
+diffusers==0.35.0
 
-# T5 text encoder (Wan ships with umt5-xxl)
-sentencepiece>=0.2.0
+# UMT5 tokenizer (Wan's text encoder) needs both sentencepiece AND
+# protobuf to deserialize the .model file. v2 missed protobuf.
+sentencepiece==0.2.0
+protobuf==5.28.3
 
-# Image decode for i2v
-pillow>=11.0.0
+# Numpy 2 broke a lot of imageio/opencv builds. Stay on 1.x.
+numpy<2
 
-# Memory + perf — xformers tied to torch version, let pip resolve
-xformers>=0.0.28
+# Misc
+einops==0.8.0
+opencv-python==4.10.0.84
+imageio==2.36.1
+imageio-ffmpeg==0.5.1
+av==13.1.0
+pillow==11.0.0
+
+# xformers tracks torch — let pip find the one for torch 2.5.1.
+xformers==0.0.28.post3
